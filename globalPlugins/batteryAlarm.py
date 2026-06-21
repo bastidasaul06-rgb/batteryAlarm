@@ -3,9 +3,13 @@ import ui
 import wx
 import tones
 import config
+import gui
 import ctypes
+import addonHandler
 from ctypes import wintypes
 from scriptHandler import script
+
+addonHandler.initTranslation()
 
 
 class SYSTEM_POWER_STATUS(ctypes.Structure):
@@ -41,8 +45,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self._chargeAlarming = False
         self._chargeDismissed = False
         self._timer = wx.PyTimer(self._checkBattery)
+        self._menuItem = None
         interval = config.conf["batteryAlarm"]["checkInterval"] * 1000
         self._timer.Start(interval)
+        self._createMenu()
 
     def _getBatteryPercent(self):
         try:
@@ -143,6 +149,78 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             dismissed = True
         if dismissed:
             ui.message("Alarma detenida por el usuario")
+
+    def _createMenu(self):
+        self._menuItem = gui.mainFrame.sysMenu.Append(
+            wx.ID_ANY,
+            "Alarma de Bateria - &Buscar actualizaciones...",
+            "Buscar nuevas versiones del complemento en GitHub",
+        )
+        gui.mainFrame.sysMenu.Bind(wx.EVT_MENU, self._onUpdateMenu, self._menuItem)
+
+    def _onUpdateMenu(self, event):
+        self._checkForUpdates()
+
+    def _getCurrentVersion(self):
+        try:
+            import addonHandler
+
+            a = addonHandler.getCodeAddon()
+            if a:
+                return a.manifest["version"]
+        except Exception:
+            pass
+        return "1.1.0"
+
+    def _checkForUpdates(self):
+        import urllib.request
+        import json
+
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/bastidasaul06-rgb/batteryAlarm/releases/latest",
+                headers={"User-Agent": "batteryAlarm"},
+            )
+            resp = urllib.request.urlopen(req, timeout=10)
+            release = json.loads(resp.read().decode())
+            latest = release["tag_name"].lstrip("v")
+            current = self._getCurrentVersion()
+            if self._compareVersions(latest, current) > 0:
+                download = (
+                    release["assets"][0]["browser_download_url"]
+                    if release.get("assets")
+                    else ""
+                )
+                msg = f"Version {latest} disponible (actual: {current}).\n\nDescargar?"
+                result = wx.MessageBox(
+                    msg,
+                    "Actualizacion disponible",
+                    wx.YES_NO | wx.ICON_QUESTION | wx.CENTER,
+                )
+                if result == wx.YES and download:
+                    import webbrowser
+
+                    webbrowser.open(download)
+            else:
+                ui.message(f"No hay actualizaciones disponibles ({current})")
+        except Exception as e:
+            ui.message(f"Error al buscar actualizaciones: {e}")
+
+    def _compareVersions(self, v1, v2):
+        parts1 = [int(x) for x in v1.split(".")]
+        parts2 = [int(x) for x in v2.split(".")]
+        for a, b in zip(parts1, parts2):
+            if a != b:
+                return a - b
+        return len(parts1) - len(parts2)
+
+    @script(
+        description="Buscar actualizaciones del complemento",
+        category=scriptCategory,
+        gesture="kb:NVDA+shift+alt+u",
+    )
+    def script_checkUpdates(self, gesture):
+        wx.CallAfter(self._checkForUpdates)
 
     @script(
         description="Configurar alarma de bateria",
@@ -269,4 +347,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def terminate(self):
         if self._timer:
             self._timer.Stop()
+        try:
+            gui.mainFrame.sysMenu.Remove(self._menuItem)
+        except Exception:
+            pass
         super().terminate()
