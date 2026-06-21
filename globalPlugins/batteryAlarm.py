@@ -19,16 +19,19 @@ class SYSTEM_POWER_STATUS(ctypes.Structure):
     ]
 
 
-confspec = {
-    "enabled": "boolean(default=True)",
-    "threshold": "integer(default=20)",
-    "chargeEnabled": "boolean(default=False)",
-    "chargeThreshold": "integer(default=90)",
-    "beepFrequency": "integer(default=880)",
-    "beepDuration": "integer(default=500)",
-    "checkInterval": "integer(default=5)",
-}
-config.conf.spec["batteryAlarm"] = confspec
+try:
+    confspec = {
+        "enabled": "boolean(default=True)",
+        "threshold": "integer(default=20)",
+        "chargeEnabled": "boolean(default=False)",
+        "chargeThreshold": "integer(default=90)",
+        "beepFrequency": "integer(default=880)",
+        "beepDuration": "integer(default=500)",
+        "checkInterval": "integer(default=5)",
+    }
+    config.conf.spec["batteryAlarm"] = confspec
+except Exception:
+    pass
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
@@ -40,12 +43,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self._dismissed = False
         self._chargeAlarming = False
         self._chargeDismissed = False
-        self._timer = wx.PyTimer(self._checkBattery)
         self._menuConfigItem = None
         self._menuUpdateItem = None
-        interval = config.conf["batteryAlarm"]["checkInterval"] * 1000
-        self._timer.Start(interval)
-        self._createMenu()
+        try:
+            interval = config.conf["batteryAlarm"]["checkInterval"] * 1000
+            self._timer = wx.PyTimer(self._checkBattery)
+            self._timer.Start(interval)
+        except Exception:
+            self._timer = None
+        wx.CallAfter(self._createMenu)
 
     def _getBatteryPercent(self):
         try:
@@ -148,9 +154,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             ui.message("Alarma detenida por el usuario")
 
     def _createMenu(self):
-        import gui
-
         try:
+            import gui
+
             self._menuConfigItem = gui.mainFrame.sysMenu.Append(
                 wx.ID_ANY,
                 "Alarma de Bateria - &Configurar...",
@@ -171,19 +177,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             )
         except Exception:
             pass
-        gui.mainFrame.sysMenu.Bind(
-            wx.EVT_MENU,
-            lambda e: wx.CallAfter(self._showConfigDialog),
-            self._menuConfigItem,
-        )
-        self._menuUpdateItem = gui.mainFrame.sysMenu.Append(
-            wx.ID_ANY,
-            "Alarma de Bateria - Buscar &actualizaciones...",
-            "Buscar nuevas versiones del complemento en GitHub",
-        )
-        gui.mainFrame.sysMenu.Bind(
-            wx.EVT_MENU, lambda e: self._checkForUpdates(), self._menuUpdateItem
-        )
 
     def _getCurrentVersion(self):
         try:
@@ -202,12 +195,16 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         import os
         import tempfile
 
+        REPO = "bastidasaul06-rgb/batteryAlarm"
+        DOWNLOAD_URL = f"https://github.com/{REPO}/releases/latest/download/batteryAlarm.nvda-addon"
+        RELEASES_URL = f"https://github.com/{REPO}/releases"
+
         try:
             req = urllib.request.Request(
-                "https://api.github.com/repos/bastidasaul06-rgb/batteryAlarm/releases/latest",
+                f"https://api.github.com/repos/{REPO}/releases/latest",
                 headers={"User-Agent": "batteryAlarm"},
             )
-            resp = urllib.request.urlopen(req, timeout=10)
+            resp = urllib.request.urlopen(req, timeout=15)
             release = json.loads(resp.read().decode())
             latest = release["tag_name"].lstrip("v")
             current = self._getCurrentVersion()
@@ -217,27 +214,39 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             download = (
                 release["assets"][0]["browser_download_url"]
                 if release.get("assets")
-                else ""
+                else DOWNLOAD_URL
             )
-            if not download:
-                ui.message("Error: no se encontro archivo de descarga")
-                return
-            msg = (
-                f"Version {latest} disponible (actual: {current}).\n"
-                "Descargar e instalar la actualizacion?"
-            )
+        except Exception as e:
             result = wx.MessageBox(
-                msg,
-                "Actualizacion disponible",
-                wx.YES_NO | wx.ICON_QUESTION | wx.CENTER,
+                f"No se pudo conectar con GitHub ({e}).\n\n"
+                f"Quiere abrir la pagina de descargas en el navegador?",
+                "Error de conexion",
+                wx.YES_NO | wx.ICON_WARNING | wx.CENTER,
             )
-            if result != wx.YES:
-                return
-            ui.message("Descargando actualizacion...")
+            if result == wx.YES:
+                import webbrowser
+
+                webbrowser.open(RELEASES_URL)
+            return
+
+        msg = (
+            f"Version {latest} disponible (actual: {current}).\n"
+            "Descargar e instalar la actualizacion?"
+        )
+        result = wx.MessageBox(
+            msg,
+            "Actualizacion disponible",
+            wx.YES_NO | wx.ICON_QUESTION | wx.CENTER,
+        )
+        if result != wx.YES:
+            return
+
+        ui.message("Descargando actualizacion...")
+        try:
             dlReq = urllib.request.Request(
                 download, headers={"User-Agent": "batteryAlarm"}
             )
-            dlResp = urllib.request.urlopen(dlReq, timeout=30)
+            dlResp = urllib.request.urlopen(dlReq, timeout=60)
             addonData = dlResp.read()
             tempPath = os.path.join(
                 tempfile.gettempdir(), "batteryAlarm_update.nvda-addon"
@@ -258,7 +267,16 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 wx.OK | wx.ICON_INFORMATION | wx.CENTER,
             )
         except Exception as e:
-            ui.message(f"Error al buscar actualizaciones: {e}")
+            fallback = wx.MessageBox(
+                f"Error al descargar: {e}.\n\n"
+                "Quiere abrir la pagina de descargas en el navegador?",
+                "Error de descarga",
+                wx.YES_NO | wx.ICON_WARNING | wx.CENTER,
+            )
+            if fallback == wx.YES:
+                import webbrowser
+
+                webbrowser.open(RELEASES_URL)
 
     def _compareVersions(self, v1, v2):
         parts1 = [int(x) for x in v1.split(".")]
@@ -393,24 +411,30 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             conf["beepDuration"] = durSpin.GetValue()
             config.conf.save()
             interval = conf["checkInterval"] * 1000
-            self._timer.Stop()
-            self._timer.Start(interval)
+            if self._timer:
+                self._timer.Stop()
+                self._timer.Start(interval)
             ui.message("Configuracion guardada")
         dialog.Destroy()
 
     def terminate(self):
-        if self._timer:
-            self._timer.Stop()
         try:
-            import gui
-
-            gui.mainFrame.sysMenu.Remove(self._menuConfigItem)
+            if self._timer:
+                self._timer.Stop()
         except Exception:
             pass
         try:
             import gui
 
-            gui.mainFrame.sysMenu.Remove(self._menuUpdateItem)
+            if self._menuConfigItem:
+                gui.mainFrame.sysMenu.Remove(self._menuConfigItem)
+        except Exception:
+            pass
+        try:
+            import gui
+
+            if self._menuUpdateItem:
+                gui.mainFrame.sysMenu.Remove(self._menuUpdateItem)
         except Exception:
             pass
         super().terminate()
