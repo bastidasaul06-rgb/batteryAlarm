@@ -187,7 +187,7 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                 return a.manifest["version"]
         except Exception:
             pass
-        return "1.1.0"
+        return "1.2.0"
 
     def _checkForUpdates(self):
         import urllib.request
