@@ -3,13 +3,9 @@ import ui
 import wx
 import tones
 import config
-import gui
 import ctypes
-import addonHandler
 from ctypes import wintypes
 from scriptHandler import script
-
-addonHandler.initTranslation()
 
 
 class SYSTEM_POWER_STATUS(ctypes.Structure):
@@ -45,7 +41,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self._chargeAlarming = False
         self._chargeDismissed = False
         self._timer = wx.PyTimer(self._checkBattery)
-        self._menuItem = None
+        self._menuConfigItem = None
+        self._menuUpdateItem = None
         interval = config.conf["batteryAlarm"]["checkInterval"] * 1000
         self._timer.Start(interval)
         self._createMenu()
@@ -151,15 +148,42 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             ui.message("Alarma detenida por el usuario")
 
     def _createMenu(self):
-        self._menuItem = gui.mainFrame.sysMenu.Append(
+        import gui
+
+        try:
+            self._menuConfigItem = gui.mainFrame.sysMenu.Append(
+                wx.ID_ANY,
+                "Alarma de Bateria - &Configurar...",
+                "Abrir configuracion de la alarma de bateria",
+            )
+            gui.mainFrame.sysMenu.Bind(
+                wx.EVT_MENU,
+                lambda e: wx.CallAfter(self._showConfigDialog),
+                self._menuConfigItem,
+            )
+            self._menuUpdateItem = gui.mainFrame.sysMenu.Append(
+                wx.ID_ANY,
+                "Alarma de Bateria - Buscar &actualizaciones...",
+                "Buscar nuevas versiones del complemento en GitHub",
+            )
+            gui.mainFrame.sysMenu.Bind(
+                wx.EVT_MENU, lambda e: self._checkForUpdates(), self._menuUpdateItem
+            )
+        except Exception:
+            pass
+        gui.mainFrame.sysMenu.Bind(
+            wx.EVT_MENU,
+            lambda e: wx.CallAfter(self._showConfigDialog),
+            self._menuConfigItem,
+        )
+        self._menuUpdateItem = gui.mainFrame.sysMenu.Append(
             wx.ID_ANY,
-            "Alarma de Bateria - &Buscar actualizaciones...",
+            "Alarma de Bateria - Buscar &actualizaciones...",
             "Buscar nuevas versiones del complemento en GitHub",
         )
-        gui.mainFrame.sysMenu.Bind(wx.EVT_MENU, self._onUpdateMenu, self._menuItem)
-
-    def _onUpdateMenu(self, event):
-        self._checkForUpdates()
+        gui.mainFrame.sysMenu.Bind(
+            wx.EVT_MENU, lambda e: self._checkForUpdates(), self._menuUpdateItem
+        )
 
     def _getCurrentVersion(self):
         try:
@@ -220,6 +244,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             )
             with open(tempPath, "wb") as f:
                 f.write(addonData)
+            import addonHandler
+
             addonHandler.installAddonBundle(tempPath)
             try:
                 os.remove(tempPath)
@@ -376,7 +402,15 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         if self._timer:
             self._timer.Stop()
         try:
-            gui.mainFrame.sysMenu.Remove(self._menuItem)
+            import gui
+
+            gui.mainFrame.sysMenu.Remove(self._menuConfigItem)
+        except Exception:
+            pass
+        try:
+            import gui
+
+            gui.mainFrame.sysMenu.Remove(self._menuUpdateItem)
         except Exception:
             pass
         super().terminate()
