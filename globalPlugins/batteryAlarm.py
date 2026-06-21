@@ -175,6 +175,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def _checkForUpdates(self):
         import urllib.request
         import json
+        import os
+        import tempfile
 
         try:
             req = urllib.request.Request(
@@ -185,24 +187,50 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             release = json.loads(resp.read().decode())
             latest = release["tag_name"].lstrip("v")
             current = self._getCurrentVersion()
-            if self._compareVersions(latest, current) > 0:
-                download = (
-                    release["assets"][0]["browser_download_url"]
-                    if release.get("assets")
-                    else ""
-                )
-                msg = f"Version {latest} disponible (actual: {current}).\n\nDescargar?"
-                result = wx.MessageBox(
-                    msg,
-                    "Actualizacion disponible",
-                    wx.YES_NO | wx.ICON_QUESTION | wx.CENTER,
-                )
-                if result == wx.YES and download:
-                    import webbrowser
-
-                    webbrowser.open(download)
-            else:
+            if self._compareVersions(latest, current) <= 0:
                 ui.message(f"No hay actualizaciones disponibles ({current})")
+                return
+            download = (
+                release["assets"][0]["browser_download_url"]
+                if release.get("assets")
+                else ""
+            )
+            if not download:
+                ui.message("Error: no se encontro archivo de descarga")
+                return
+            msg = (
+                f"Version {latest} disponible (actual: {current}).\n"
+                "Descargar e instalar la actualizacion?"
+            )
+            result = wx.MessageBox(
+                msg,
+                "Actualizacion disponible",
+                wx.YES_NO | wx.ICON_QUESTION | wx.CENTER,
+            )
+            if result != wx.YES:
+                return
+            ui.message("Descargando actualizacion...")
+            dlReq = urllib.request.Request(
+                download, headers={"User-Agent": "batteryAlarm"}
+            )
+            dlResp = urllib.request.urlopen(dlReq, timeout=30)
+            addonData = dlResp.read()
+            tempPath = os.path.join(
+                tempfile.gettempdir(), "batteryAlarm_update.nvda-addon"
+            )
+            with open(tempPath, "wb") as f:
+                f.write(addonData)
+            addonHandler.installAddonBundle(tempPath)
+            try:
+                os.remove(tempPath)
+            except Exception:
+                pass
+            wx.MessageBox(
+                "Actualizacion instalada correctamente.\n"
+                "Reinicie NVDA para aplicar los cambios.",
+                "Actualizacion completada",
+                wx.OK | wx.ICON_INFORMATION | wx.CENTER,
+            )
         except Exception as e:
             ui.message(f"Error al buscar actualizaciones: {e}")
 
